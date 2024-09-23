@@ -129,31 +129,47 @@ def send_compressed_file_send(server_component):
         sock.close()
 
 
-print("All config files sent.")
+    print("All config files sent.")
+
 while True:
-    # Receive the header
+    # Step 1: Receive the header
     data, addr = server_socket.recvfrom(buffer_size)
-    header = data.decode('utf-8')
-    print(f"Received header: {header} from {addr}")
-    
-    # Extract the received_server_name from the header (FP1;x;{client_name};b;)
-    header_parts = header.split(';')
-    if len(header_parts) != 4 or header_parts[0] != "FP1":
-        print("Invalid header format!")
-        continue
-    received_server_name = header_parts[2]
-    
-    # Prepare to receive the file
-    compressed_file = f"config1_{received_server_name}.tar.gz"
-    with open(compressed_file, "wb") as f:
-        while True:
-            data, addr = server_socket.recvfrom(buffer_size)
-            if not data:
-                break
-            f.write(data)
-    
-    # Decompress the tar.gz file
-    os.system(f"tar -xzvf {compressed_file}")
+    try:
+        # Decode the first part as UTF-8 (this is the header)
+        header = data.decode('utf-8')
+        print(f"Received header: {header} from {addr}")
+
+        # Validate the header format and check for the EOT marker ('b')
+        header_parts = header.split(';')
+        if len(header_parts) != 4 or header_parts[0] != "FP1" or header_parts[3] != "b":
+            print("Invalid header format!")
+            continue
+        
+        # Extract the received server name
+        received_server_name = header_parts[2]
+
+        # Once the 'b' is detected, switch to receiving binary data (file)
+        print("End of header detected (EOT). Now receiving binary file data.")
+
+        # Prepare to receive the compressed file (Step 2: Receive the compressed file)
+        compressed_file = f"config1_{received_server_name}.tar.gz"
+        with open(compressed_file, "wb") as f:
+            print(f"Receiving compressed file for {received_server_name}...")
+            while True:
+                # Receive binary data for the file
+                data, addr = server_socket.recvfrom(buffer_size)
+                if not data:
+                    break
+                f.write(data)
+
+        print(f"Received and saved compressed file: {compressed_file}")
+
+        # Step 3: Decompress the tar.gz file
+        os.system(f"tar -xzvf {compressed_file}")
+        print(f"Decompressed file for {received_server_name}")
+
+    except UnicodeDecodeError:
+        print("Failed to decode the header, skipping this packet.")
     config_file_name = f"config1_{received_server_name}.ini"
     
     # Load the received config file
