@@ -146,7 +146,8 @@ while True:
             continue
         
         # Extract the received server name
-        received_server_name = header_parts[2]
+        received_server_name = str(header_parts[2])
+        print(header_parts[2])
 
         # Once the 'b' is detected, switch to receiving binary data (file)
         print("End of header detected (EOT). Now receiving binary file data.")
