@@ -26,7 +26,7 @@ def get_current_self_name():
     ).strip()
 server_current_self_name = get_current_self_name()
 # Function to send UDP messages
-def send_udp_message(ip, message, port=13898):
+def send_udp_message(ip, message, port=19831):
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.sendto(message.encode('utf-8'), (ip, port))
     udp_socket.close()
@@ -149,9 +149,18 @@ if __name__ == '__main__':
     e1_thread = threading.Thread(target=listen_for_e1_messages)
     e1_thread.start()
 
-    # Only process config2.ini and create config_tree.ini if the current machine is a manager (excluding the last character)
-    if current_self_name.startswith("manager"):
-        print(f"Processing config2.ini and creating config_tree.ini as current machine is: {current_self_name}")
+
+    print(f"Processing config2.ini and creating config_tree.ini ")
+    command = ['chronyc', 'sources']
+
+# Run the command and capture the output
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+# Access the captured output and errors
+    output = result.stdout
+    print(f"The Error with chronyc is {output}")
+    try: 
         create_grouped_config_tree(config_file2, output_file)
-    else:
-        print(f"Skipping config2.ini processing. Current machine is: {current_self_name}")
+    except Exception as e:
+        print(f"Error seen as: {e}")
+
