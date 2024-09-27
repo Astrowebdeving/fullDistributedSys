@@ -6,7 +6,7 @@ import ast  # To safely parse dictionary strings from config
 
 # Get the server's machine name (should be manager0)
 machine_name = subprocess.check_output(
-    "ip=$(hostname -I | awk '{print $1}')\ncat /etc/hosts | grep $ip | awk '{print $2}'",
+    "ip=$(hostname -I | awk '{print $1}')\n cat /etc/hosts | grep -w $ip | awk '{print $2}'",
     shell=True, text=True
 ).strip()
 
@@ -132,27 +132,20 @@ def send_compressed_file_send(server_component):
     print("All config files sent.")
 
 while True:
-    # Step 1: Receive the header
-    data, addr = server_socket.recvfrom(buffer_size)
     try:
-        # Decode the first part as UTF-8 (this is the header)
-        header = data.decode('utf-8')
-        print(f"Received header: {header} from {addr}")
+        # Step 1: Receive the header
+        print("Waiting for the header...")
+        header_data, addr = server_socket.recvfrom(buffer_size)
+        header = header_data.decode('utf-8').strip()
+        print(f"Received header from {addr}: {header}")
 
-        # Validate the header format and check for the EOT marker ('b')
+        # Parse the header to extract useful information
         header_parts = header.split(';')
-        if len(header_parts) != 4 or header_parts[0] != "FP1" or header_parts[3] != "b":
-            print("Invalid header format!")
-            continue
-        
-        # Extract the received server name
-        received_server_name = str(header_parts[2])
-        print(header_parts[2])
+        if len(header_parts) < 3:
+            raise ValueError("Invalid header format")
+        received_server_name = header_parts[2]
 
-        # Once the 'b' is detected, switch to receiving binary data (file)
-        print("End of header detected (EOT). Now receiving binary file data.")
-
-        # Prepare to receive the compressed file (Step 2: Receive the compressed file)
+        # Step 2: Receive the compressed file
         compressed_file = f"config1_{received_server_name}.tar.gz"
         with open(compressed_file, "wb") as f:
             print(f"Receiving compressed file for {received_server_name}...")
@@ -171,36 +164,32 @@ while True:
 
     except UnicodeDecodeError:
         print("Failed to decode the header, skipping this packet.")
-    config_file_name = f"config1_{received_server_name}.ini"
-    
-    # Load the received config file
-    received_config = configparser.ConfigParser()
-    received_config.read(config_file_name)
-    
-    # Append to config_combined.ini
-    config_combined.read('config_combined.ini')
-    
-    if received_server_name in received_config.sections():
-        if received_server_name not in config_combined.sections():
-            config_combined.add_section(received_server_name)
-        
-        for key, value in received_config.items(received_server_name):
-            config_combined.set(received_server_name, key, value)
-    
-    # Save the updated config_combined.ini
-    with open('config_combined.ini', 'w') as combined_file:
-        config_combined.write(combined_file)
-    
-    print(f"Appended section [{received_server_name}] to config_combined.ini")
+    except Exception as e:
+        print(f"Error: {e}")
 
-    # Update the merged network based on the new server information
-    update_merged_network()
+    finally:
+        config_file_name = f"config1_{received_server_name}.ini"
+        received_config = configparser.ConfigParser()
+        received_config.read(config_file_name)
 
-    # Update the edgelists in each config1_{server_component}.ini file
-    update_server_edgelists()
+        config_combined.read('config_combined.ini')
+        if received_server_name in received_config.sections():
+            if received_server_name not in config_combined.sections():
+                config_combined.add_section(received_server_name)
+            for key, value in received_config.items(received_server_name):
+                config_combined.set(received_server_name, key, value)
 
-    for server_component in networklist:
-        if os.path.exists(f"config1_{server_component}.ini"):
-            send_compressed_file_send(server_component)
-        else:
-            print(f"Config file for {server_component} does not exist.")
+        # Save the updated config_combined.ini
+        with open('config_combined.ini', 'w') as combined_file:
+            config_combined.write(combined_file)
+
+        print(f"Appended section [{received_server_name}] to config_combined.ini")
+
+        # Additional functionality that may need to be invoked:
+        update_merged_network()
+        update_server_edgelists()
+        for server_component in networklist:
+            if os.path.exists(f"config1_{server_component}.ini"):
+                send_compressed_file_send(server_component)
+            else:
+                print(f"Config file for {server_component} does not exist.")
