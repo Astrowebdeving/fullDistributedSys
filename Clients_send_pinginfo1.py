@@ -4,7 +4,7 @@ import os
 
 # Get the client's self name (client_name)
 client_name = subprocess.check_output(
-    "ip=$(hostname -I | awk '{print $1}')\ncat /etc/hosts | grep $ip | awk '{print $2}'",
+    "ip=$(hostname -I | awk '{print $1}')\n cat /etc/hosts | grep -w $ip | awk '{print $2}'",
     shell=True, text=True
 ).strip()
 
@@ -22,11 +22,11 @@ header = f"FP1;x;{client_name};b;"
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 try:
-    # Send the header first
+    # Send the header first (this must be sent as a separate message)
     sock.sendto(header.encode('utf-8'), server_address)
     print(f"Header sent: {header}")
     
-    # Send the compressed config1.ini file
+    # Send the compressed config1.ini file (this must be sent as binary)
     with open(compressed_file, "rb") as f:
         while True:
             data = f.read(1024)
