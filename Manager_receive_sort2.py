@@ -3,6 +3,7 @@ import subprocess
 import os
 import configparser
 import ast  # To safely parse dictionary strings from config
+import datetime
 
 # Get the server's machine name (should be manager0)
 machine_name = subprocess.check_output(
@@ -27,7 +28,21 @@ config_network = configparser.ConfigParser()
 config_network.read('config_network.ini')
 networklist = config_network.get('networklist', 'servers', fallback="").split(',')
 
-# Create a config parser for appending to config_combined.ini
+import subprocess
+
+def get_machine_from_ip(client_ip):
+    # Use single quotes around the shell command to avoid conflicts with double quotes in the command
+    command = f"client_name=$(grep -w '{client_ip}' /etc/hosts | awk '{{print $2}}'); echo $client_name"
+    
+    try:
+        client_name = subprocess.check_output(command, shell=True, text=True).strip()
+        return client_name
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred: {e}")
+        return None
+
+# Create a config parser for appending to confi
+# g_combined.ini
 config_combined = configparser.ConfigParser()
 
 def update_merged_network():
@@ -134,40 +149,36 @@ def send_compressed_file_send(server_component):
 while True:
     try:
         # Step 1: Receive the header
-        print("Waiting for the header...")
-        header_data, addr = server_socket.recvfrom(buffer_size)
-        header = header_data.decode('utf-8').strip()
-        print(f"Received header from {addr}: {header}")
-
-        # Parse the header to extract useful information
-        header_parts = header.split(';')
-        if len(header_parts) < 3:
-            raise ValueError("Invalid header format")
-        received_server_name = header_parts[2]
+        data, addr = server_socket.recvfrom(buffer_size)
+        message = data.decode('utf-8').strip()
+        client_recv_ip = addr[0]
+        received_server_name = get_machine_from_ip(client_recv_ip)
 
         # Step 2: Receive the compressed file
         compressed_file = f"config1_{received_server_name}.tar.gz"
         with open(compressed_file, "wb") as f:
             print(f"Receiving compressed file for {received_server_name}...")
             while True:
+                try:
                 # Receive binary data for the file
-                data, addr = server_socket.recvfrom(buffer_size)
-                if not data:
-                    break
-                f.write(data)
+                    data, addr = server_socket.recvfrom(buffer_size)
+                    if not data:
+                        break
+                    f.write(data)
+                except Exception as e:
+                    print(f"Error in server loop: {e}")
 
-        print(f"Received and saved compressed file: {compressed_file}")
+
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Print the client's IP, port, and the current date
+        print(f"Received message from IP: {client_recv_ip}, Port: 29374, Date: {current_time}")
 
         # Step 3: Decompress the tar.gz file
         os.system(f"tar -xzvf {compressed_file}")
         print(f"Decompressed file for {received_server_name}")
 
-    except UnicodeDecodeError:
-        print("Failed to decode the header, skipping this packet.")
-    except Exception as e:
-        print(f"Error: {e}")
-
-    finally:
+        # Step 4: Process the config file and merge with combined config
         config_file_name = f"config1_{received_server_name}.ini"
         received_config = configparser.ConfigParser()
         received_config.read(config_file_name)
@@ -185,11 +196,20 @@ while True:
 
         print(f"Appended section [{received_server_name}] to config_combined.ini")
 
-        # Additional functionality that may need to be invoked:
+        # Update merged network and edgelists
         update_merged_network()
         update_server_edgelists()
+
+        # Send the updated files to the network
         for server_component in networklist:
             if os.path.exists(f"config1_{server_component}.ini"):
                 send_compressed_file_send(server_component)
             else:
                 print(f"Config file for {server_component} does not exist.")
+
+    except UnicodeDecodeError:
+        print("Failed to decode the header, skipping this packet.")
+    except Exception as e:
+        print(f"Error: {e}")
+
+    # No socket closing here - server will continue to listen for requests

@@ -16,17 +16,13 @@ compressed_file = f"config1_{client_name}.tar.gz"
 os.system(f"tar -czvf {compressed_file} config1.ini")
 
 # Create the header
-header = f"FP1;x;{client_name};b;"
 
 # Send the header and compressed file over UDP
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 try:
-    # Send the header first (this must be sent as a separate message)
-    sock.sendto(header.encode('utf-8'), server_address)
-    print(f"Header sent: {header}")
-    
     # Send the compressed config1.ini file (this must be sent as binary)
+    print("Sending File")
     with open(compressed_file, "rb") as f:
         while True:
             data = f.read(1024)
