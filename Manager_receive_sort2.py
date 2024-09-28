@@ -4,7 +4,7 @@ import os
 import configparser
 import struct
 import ast
-
+import subprocess
 # Server setup
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(("", 29374))
@@ -158,8 +158,12 @@ def send_compressed_file_send(server_component):
 
 
 # Step 5: Handle the reception of client files and initiate the merging process
-def handle_client(client_addr):
+def handle_client(client_addr_full):
     try:
+        client_addr = subprocess.check_output(
+    f"grep -w '{client_addr_full}' /etc/hosts | awk '{{print $2}}'",
+    shell=True, text=True
+).strip()
         # Step 1: Receive the file size
         print(f"Handling client {client_addr}")
         packed_file_size, _ = server_socket.recvfrom(8)
@@ -208,7 +212,8 @@ def handle_client(client_addr):
 def start_server():
     while True:
         # Use threading to handle multiple clients
-        data, client_addr = server_socket.recvfrom(buffer_size)
-        threading.Thread(target=handle_client, args=(client_addr,)).start()
+        data, client_addr_full = server_socket.recvfrom(buffer_size)
+        
+        threading.Thread(target=handle_client, args=(client_addr_full,)).start()
 
 start_server()
