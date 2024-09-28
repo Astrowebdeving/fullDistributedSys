@@ -26,7 +26,7 @@ def handle_client(data, address):
                 # Send the response back to the client
                 response_message = f"T2;x;{server_self_name};z*;{repetition_index}".encode('utf-8')
                 response_socket.sendto(response_message, (address[0], 13898))
-                print(f"Processing and sent back message from {address[0]} on 13898, repetition {repetition_index}")
+                print(f"Processing and sent back message from {address[0]}, 13898 on , repetition {repetition_index}")
 
     except Exception as e:
         print(f"Error handling message from {address}: {e}")

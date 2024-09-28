@@ -1,56 +1,57 @@
 import socket
-import subprocess
+import threading
 import os
 import configparser
-import ast  # To safely parse dictionary strings from config
-import datetime
+import struct
+import ast
 
-# Get the server's machine name (should be manager0)
-machine_name = subprocess.check_output(
-    "ip=$(hostname -I | awk '{print $1}')\n cat /etc/hosts | grep -w $ip | awk '{print $2}'",
-    shell=True, text=True
-).strip()
-
-# Ensure this is the correct machine
-if machine_name != "manager0":
-    raise RuntimeError("This script should only run on manager0")
-
-# UDP server setup
+# Server setup
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(("", 29374))
 print("UDP server is listening on port 29374...")
 
-# Buffer size
 buffer_size = 1024
 
-# Load networklist from config_network.ini
+# Read the network list
 config_network = configparser.ConfigParser()
 config_network.read('config_network.ini')
 networklist = config_network.get('networklist', 'servers', fallback="").split(',')
 
-import subprocess
+received_clients = []  # Keep track of clients we've received files from
 
-def get_machine_from_ip(client_ip):
-    # Use single quotes around the shell command to avoid conflicts with double quotes in the command
-    command = f"client_name=$(grep -w '{client_ip}' /etc/hosts | awk '{{print $2}}'); echo $client_name"
-    
-    try:
-        client_name = subprocess.check_output(command, shell=True, text=True).strip()
-        return client_name
-    except subprocess.CalledProcessError as e:
-        print(f"Error occurred: {e}")
-        return None
+# Step 1: Merging logic for the combined configuration
+def merge_configs(received_config_file, received_server_name):
+    # Load the received config file
+    received_config = configparser.ConfigParser()
+    received_config.read(received_config_file)
 
-# Create a config parser for appending to confi
-# g_combined.ini
-config_combined = configparser.ConfigParser()
+    # Load the combined config
+    config_combined = configparser.ConfigParser()
+    config_combined.read('config_combined.ini')
 
+    # Merge the received config into the combined config
+    if received_server_name in received_config.sections():
+        if received_server_name not in config_combined.sections():
+            config_combined.add_section(received_server_name)
+        for key, value in received_config.items(received_server_name):
+            config_combined.set(received_server_name, key, value)
+
+    # Save the updated combined config
+    with open('config_combined.ini', 'w') as combined_file:
+        config_combined.write(combined_file)
+
+    print(f"Appended section [{received_server_name}] to config_combined.ini")
+
+
+# Step 2: Update the merged network using the lowest transmission time
 def update_merged_network():
     """
     This function updates the [merged_network] section in config_combined.ini by finding
     the lowest trans_time for each server in the networklist.
     """
     merged_network = {}
+    config_combined = configparser.ConfigParser()
+    config_combined.read('config_combined.ini')
 
     # Iterate over all server components in networklist
     for server_component in networklist:
@@ -85,12 +86,19 @@ def update_merged_network():
     with open('config_combined.ini', 'w') as combined_file:
         config_combined.write(combined_file)
 
+    print("Merged network updated with the lowest transmission times for each server.")
+
+
+# Step 3: Update the server edgelists based on the merged network
 def update_server_edgelists():
     """
     For each server_component in networklist, search the merged_network for both origin_server
     and server_name values that match the server_component. If found, append the corresponding
     dictionary to the edgelist in config1_{server_component}.ini.
     """
+    config_combined = configparser.ConfigParser()
+    config_combined.read('config_combined.ini')
+
     for server_component in networklist:
         # Open or create config1_{server_component}.ini
         config_server = configparser.ConfigParser()
@@ -106,7 +114,7 @@ def update_server_edgelists():
             entry = ast.literal_eval(value)
 
             # If both origin_server and server_name match, add to edgelist
-            if entry["origin_server"] == server_component and entry["server_name"] == server_component:
+            if entry["origin_server"] == server_component or entry["server_name"] == server_component:
                 if entry["server_name"] not in edgelist:
                     edgelist.append(entry["server_name"])
 
@@ -118,6 +126,9 @@ def update_server_edgelists():
             config_server.write(server_file)
 
         print(f"Updated edgelist for {server_component} in {server_config_file}")
+
+
+# Step 4: Compress and send the edgelist config file back to the clients
 def send_compressed_file_send(server_component):
     compressed_file = f"config1_{server_component}.tar.gz"
     config_file = f"config1_{server_component}.ini"
@@ -143,73 +154,61 @@ def send_compressed_file_send(server_component):
     finally:
         sock.close()
 
+    print(f"Config file for {server_component} sent.")
 
-    print("All config files sent.")
 
-while True:
+# Step 5: Handle the reception of client files and initiate the merging process
+def handle_client(client_addr):
     try:
-        # Step 1: Receive the header
-        data, addr = server_socket.recvfrom(buffer_size)
-        message = data.decode('utf-8').strip()
-        client_recv_ip = addr[0]
-        received_server_name = get_machine_from_ip(client_recv_ip)
+        # Step 1: Receive the file size
+        print(f"Handling client {client_addr}")
+        packed_file_size, _ = server_socket.recvfrom(8)
+        file_size = struct.unpack("!Q", packed_file_size)[0]
+        print(f"Expected file size: {file_size} bytes")
 
-        # Step 2: Receive the compressed file
-        compressed_file = f"config1_{received_server_name}.tar.gz"
+        # Step 2: Receive the file in chunks
+        compressed_file = f"config_received_{client_addr}.tar.gz"
+        bytes_received = 0
+        
         with open(compressed_file, "wb") as f:
-            print(f"Receiving compressed file for {received_server_name}...")
-            while True:
-                try:
-                # Receive binary data for the file
-                    data, addr = server_socket.recvfrom(buffer_size)
-                    if not data:
-                        break
-                    f.write(data)
-                except Exception as e:
-                    print(f"Error in server loop: {e}")
-
-
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Print the client's IP, port, and the current date
-        print(f"Received message from IP: {client_recv_ip}, Port: 29374, Date: {current_time}")
-
+            while bytes_received < file_size:
+                data, addr = server_socket.recvfrom(buffer_size)
+                if not data:
+                    break
+                f.write(data)
+                bytes_received += len(data)
+        
+        print(f"Received file '{compressed_file}' from {client_addr}, total bytes received: {bytes_received}")
+        
         # Step 3: Decompress the tar.gz file
         os.system(f"tar -xzvf {compressed_file}")
-        print(f"Decompressed file for {received_server_name}")
+        print(f"Decompressed file from {client_addr}")
 
-        # Step 4: Process the config file and merge with combined config
-        config_file_name = f"config1_{received_server_name}.ini"
-        received_config = configparser.ConfigParser()
-        received_config.read(config_file_name)
+        # Get server name from client_addr and merge
+        server_name = f"client_{client_addr[0]}"
+        merge_configs(f"config1_{server_name}.ini", server_name)
 
-        config_combined.read('config_combined.ini')
-        if received_server_name in received_config.sections():
-            if received_server_name not in config_combined.sections():
-                config_combined.add_section(received_server_name)
-            for key, value in received_config.items(received_server_name):
-                config_combined.set(received_server_name, key, value)
+        # Keep track of clients
+        if server_name not in received_clients:
+            received_clients.append(server_name)
 
-        # Save the updated config_combined.ini
-        with open('config_combined.ini', 'w') as combined_file:
-            config_combined.write(combined_file)
-
-        print(f"Appended section [{received_server_name}] to config_combined.ini")
-
-        # Update merged network and edgelists
+        # Step 4: Create individual config files with edgelist for all clients
         update_merged_network()
         update_server_edgelists()
 
-        # Send the updated files to the network
-        for server_component in networklist:
-            if os.path.exists(f"config1_{server_component}.ini"):
-                send_compressed_file_send(server_component)
-            else:
-                print(f"Config file for {server_component} does not exist.")
+        # Step 5: Send the updated edgelist files back to the clients
+        for client in received_clients:
+            send_compressed_file_send(client)
 
-    except UnicodeDecodeError:
-        print("Failed to decode the header, skipping this packet.")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error handling client {client_addr}: {e}")
 
-    # No socket closing here - server will continue to listen for requests
+
+# Step 6: Start the server and listen for incoming client connections
+def start_server():
+    while True:
+        # Use threading to handle multiple clients
+        data, client_addr = server_socket.recvfrom(buffer_size)
+        threading.Thread(target=handle_client, args=(client_addr,)).start()
+
+start_server()
